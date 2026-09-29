@@ -706,20 +706,84 @@ td.num { text-align: right; }
   const SVGNS = "http://www.w3.org/2000/svg";
   const EXTENT = { x0: -0.72, x1: 0.72, y0: -0.62, y1: 0.47 };
 
-  const json = (r) => { if (!r.ok) throw new Error(`${r.status} ${r.statusText}`); return r.json(); };
-  const post = (url, body) => fetch(url, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  }).then(json);
+  const API_BASE_URL =
+  window.location.hostname === "localhost" ||
+  window.location.hostname === "127.0.0.1"
+    ? "http://127.0.0.1:8765"
+    : "http://carefree-youthfulness-production-dedf.up.railway.app/";
+
+  const json = (r) => {
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json();
+  };
+  
+  const apiUrl = (url) => `${API_BASE_URL}/${url}`;
+  
+  const post = (url, body) => fetch(apiUrl(url), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   const cache = new Map();
   const api = {
-    catalogue: () => BUNDLE ? Promise.resolve(BUNDLE.catalogue) : fetch("api/scenarios").then(json),
+    catalogue: () => BUNDLE ? Promise.resolve(BUNDLE.catalogue) : fetch(apiUrl("api/scenarios")).then(json),
+  
     scenario: (id) => {
       if (BUNDLE) return Promise.resolve(BUNDLE.data[id]);
-      if (!cache.has(id)) cache.set(id, fetch("api/scenario/" + encodeURIComponent(id)).then(json));
+      if (!cache.has(id)) {
+        cache.set(
+          id,
+          fetch(apiUrl("api/scenario/" + encodeURIComponent(id))).then(json)
+        );
+      }
       return cache.get(id);
     },
-    results: () => BUNDLE ? Promise.resolve(BUNDLE.results) : fetch("api/results").then(json),
-    experiments: () => fetch("api/guided/experiments").then(json),
+  
+    results: () => BUNDLE
+      ? Promise.resolve(BUNDLE.results)
+      : fetch(apiUrl("api/results")).then(json),
+  
+    experiments: () => fetch(apiUrl("api/guided/experiments")).then(json),
+  
+    start: (experiment) => post("api/guided/start", { experiment }),
+  
+    act: (session, action) => post("api/guided/act", { session, action }),
+  
+    trackerExperiments: () => fetch(apiUrl("api/tracker/experiments")).then(json),
+  
+    trackerSetExperiment: (experiment_id) =>
+      post("api/tracker/set_experiment", { experiment_id }),
+  
+    trackerReset: () =>
+      post("api/tracker/reset", {}),
+  
+    trackerFrame: (frame) =>
+      post("api/tracker/frame", { frame }),
+  
+    trackerTelemetry: () =>
+      fetch(apiUrl("api/tracker/telemetry")).then(json),
+  
+    trackerCameras: () =>
+      fetch(apiUrl("api/tracker/cameras")).then(json),
+  
+    trackerStartCamera: (camera_index = -1) =>
+      post("api/tracker/start_camera", { camera_index }),
+  
+    trackerStopCamera: () =>
+      post("api/tracker/stop_camera", {}),
+  
+    trackerCameraFrame: () =>
+      fetch(apiUrl("api/tracker/camera_frame")).then(json),
+  
+    trackerLoadDemoVideo: () =>
+      post("api/tracker/load_demo_video", {}),
+  
+    trackerNextVideoFrame: () =>
+      fetch(apiUrl("api/tracker/next_video_frame")).then(json),
+  
+    trackerSimulate: (event) =>
+      post("api/tracker/simulate", { event }),
+  };
     start: (experiment) => post("api/guided/start", { experiment }),
     act: (session, action) => post("api/guided/act", { session, action }),
     trackerExperiments: () => fetch("api/tracker/experiments").then(json),
@@ -1537,7 +1601,7 @@ td.num { text-align: right; }
       const formData = new FormData();
       formData.append("file", file);
       try {
-        await fetch("api/tracker/upload_video", { method: "POST", body: formData }).then(json);
+        await fetch(apiUrl("api/tracker/upload_video"), { method: "POST", body: formData }).then(json);
         videoPlaceholder.style.display = "none";
         imgOut.style.display = "block";
         setTrackerMode("upload");
