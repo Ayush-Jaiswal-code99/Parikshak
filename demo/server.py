@@ -47,13 +47,23 @@ def page(bundle: dict[str, Any] | None = None, *, standalone: bool = True) -> st
 def create_app():
     from fastapi import FastAPI, HTTPException, UploadFile, File
     from fastapi.responses import HTMLResponse, Response
-    from parikshak.perception.tracker_service import get_tracker_service
     from fastapi.staticfiles import StaticFiles
     from fastapi.responses import FileResponse
     from pathlib import Path
 
     app = FastAPI(title="PARIKSHAK demo", docs_url=None, redoc_url=None)
-    tracker_svc = get_tracker_service()
+
+    # Load the heavy OpenCV/AI tracker only when a tracker endpoint is used.
+    tracker_svc = None
+
+    def get_tracker_svc():
+        nonlocal tracker_svc
+
+        if tracker_svc is None:
+            from parikshak.perception.tracker_service import get_tracker_service
+            tracker_svc = get_tracker_service()
+
+        return tracker_svc
 
     static_p = Path("demo/static")
     if static_p.exists():
@@ -159,30 +169,31 @@ def create_app():
     @app.post("/api/tracker/set_experiment")
     def tracker_set_experiment(payload: dict) -> dict[str, Any]:
         exp_id = str(payload.get("experiment_id", "WBP-1"))
-        return tracker_svc.set_experiment(exp_id)
+        return get_tracker_svc().set_experiment(exp_id)
 
     @app.post("/api/tracker/reset")
     def tracker_reset() -> dict[str, Any]:
-        return tracker_svc.reset()
+        return get_tracker_svc().reset()
 
     @app.post("/api/tracker/frame")
     def tracker_process_frame(payload: dict) -> dict[str, Any]:
         frame_data = str(payload.get("frame", ""))
         if not frame_data:
             raise HTTPException(400, "Missing frame data")
-        res = tracker_svc.process_b64_frame(frame_data)
+        res = get_tracker_svc().process_b64_frame(frame_data)
         if "error" in res:
             raise HTTPException(400, res["error"])
         return res
 
     @app.get("/api/tracker/telemetry")
     def tracker_telemetry() -> dict[str, Any]:
-        with tracker_svc.lock:
-            if not tracker_svc.last_telemetry:
+        tracker = get_tracker_svc()
+        with tracker.lock:
+            if not tracker.last_telemetry:
                 dummy = np.zeros((480, 640, 3), dtype=np.uint8)
-                _, telem = tracker_svc.tracker.process_frame(dummy)
-                tracker_svc.last_telemetry = telem
-            return tracker_svc.last_telemetry
+                _, telem = tracker.tracker.process_frame(dummy)
+                tracker.last_telemetry = telem
+            return tracker.last_telemetry
 
     @app.post("/api/tracker/upload_video")
     async def tracker_upload_video(file: UploadFile = File(...)) -> dict[str, Any]:
@@ -190,18 +201,18 @@ def create_app():
         upload_path.parent.mkdir(parents=True, exist_ok=True)
         content = await file.read()
         upload_path.write_bytes(content)
-        return tracker_svc.load_video_file(upload_path)
+        return get_tracker_svc().load_video_file(upload_path)
 
     @app.post("/api/tracker/load_demo_video")
     def tracker_load_demo_video() -> dict[str, Any]:
         demo_path = Path("runs/uploads/demo_bottle_run.mp4")
         if not demo_path.exists():
-            tracker_svc.generate_demo_video(str(demo_path))
-        return tracker_svc.load_video_file(demo_path)
+            get_tracker_svc().generate_demo_video(str(demo_path))
+        return get_tracker_svc().load_video_file(demo_path)
 
     @app.get("/api/tracker/next_video_frame")
     def tracker_next_video_frame() -> dict[str, Any]:
-        res = tracker_svc.get_next_video_frame()
+        res = get_tracker_svc().get_next_video_frame()
         if "error" in res:
             raise HTTPException(400, res["error"])
         return res
@@ -209,11 +220,11 @@ def create_app():
     @app.post("/api/tracker/simulate")
     def tracker_simulate(payload: dict) -> dict[str, Any]:
         event_name = str(payload.get("event", "nominal_step"))
-        return tracker_svc.simulate_event(event_name)
+        return get_tracker_svc().simulate_event(event_name)
 
     @app.get("/api/tracker/cameras")
     def tracker_cameras() -> dict[str, Any]:
-        return {"cameras": tracker_svc.list_available_cameras()}
+        return {"cameras": get_tracker_svc().list_available_cameras()}
 
     @app.post("/api/tracker/start_camera")
     def tracker_start_camera(payload: dict | None = None) -> dict[str, Any]:
@@ -222,15 +233,15 @@ def create_app():
             idx = int(raw_idx)
         except (ValueError, TypeError):
             idx = -1
-        return tracker_svc.start_local_camera(idx)
+        return get_tracker_svc().start_local_camera(idx)
 
     @app.post("/api/tracker/stop_camera")
     def tracker_stop_camera() -> dict[str, Any]:
-        return tracker_svc.stop_local_camera()
+        return get_tracker_svc().stop_local_camera()
 
     @app.get("/api/tracker/camera_frame")
     def tracker_camera_frame() -> dict[str, Any]:
-        return tracker_svc.get_camera_frame_b64()
+        return get_tracker_svc().get_camera_frame_b64()
 
     @app.get("/api/tracker/camera_stream")
     def tracker_camera_stream():
@@ -239,7 +250,7 @@ def create_app():
 
         def stream_generator():
             while True:
-                frame_bytes = tracker_svc.get_camera_frame_mjpeg()
+                frame_bytes = get_tracker_svc().get_camera_frame_mjpeg()
                 if frame_bytes is None:
                     time.sleep(0.04)
                     continue
