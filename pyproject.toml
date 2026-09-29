@@ -15,10 +15,6 @@ dependencies = [
     "uvicorn>=0.29",
     "httpx>=0.27",
     "python-multipart>=0.0.9",
-    "opencv-python-headless>=4.9",
-    "mediapipe>=0.10",
-    "onnxruntime>=1.17",
-    "pupil-apriltags>=1.0.4",
 ]
 
 [project.optional-dependencies]
