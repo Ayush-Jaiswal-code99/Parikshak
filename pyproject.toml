@@ -47,3 +47,6 @@ parikshak-run = "parikshak.run:main"
 
 [tool.setuptools.packages.find]
 include = ["parikshak*"]
+
+[tool.vercel]
+entrypoint = "demo.server:app"
