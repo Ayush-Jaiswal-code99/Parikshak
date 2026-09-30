@@ -13,7 +13,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-import cv2
 import numpy as np
 
 from parikshak.perception.yolo_tracker import YoloExperimentTracker
@@ -25,7 +24,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 class TrackerService:
     """Singleton-style coordinator for live and replay experiment tracking."""
 
-    def __init__(self, experiment_id: str = "WBP-1") -> None:
+    def __init__(self, experiment_id: str = "MOA-1") -> None:
         self.lock = threading.RLock()
         self.experiment_id = experiment_id
         self.tracker = YoloExperimentTracker(self.experiment_id)
@@ -381,32 +380,126 @@ class TrackerService:
                     cur = self.tracker.steps[self.tracker.step_idx]
                     cur.status = "completed"
                     cur.completed_at = now
-                    if cur.id == "S01":
-                        self.tracker.s01_stable_duration = self.tracker.S01_TARGET_S
-                    elif cur.id == "S02":
-                        self.tracker.target_lifted = True
-                        self.tracker.s02_lift_duration = self.tracker.S02_TARGET_S
-                    elif cur.id == "S03":
-                        self.tracker.water_consumed = True
-                        self.tracker.drink_hold_duration = self.tracker.S03_TARGET_S
-                    elif cur.id == "S04" or self.tracker.step_idx >= len(self.tracker.steps) - 1:
-                        self.tracker.protocol_complete = True
-                        self.tracker.s04_settle_duration = self.tracker.S04_TARGET_S
+                    if self.tracker.experiment_id in ["BCX-1", "BOX-COL-1"]:
+                        if cur.id == "S01":
+                            self.tracker.bcx1_s01_hold_duration = 0.8
+                            self.tracker.bcx1_container_locked = True
+                        elif cur.id == "S02":
+                            self.tracker.bcx1_s02_hold_duration = 0.8
+                            self.tracker.bcx1_colors_verified = True
+                        elif cur.id == "S03":
+                            self.tracker.bcx1_s03_hold_duration = 0.8
+                            self.tracker.bcx1_red_placed = True
+                            self.tracker.bcx1_red_inside = True
+                        elif cur.id == "S04":
+                            self.tracker.bcx1_s04_hold_duration = 0.8
+                            self.tracker.bcx1_yellow_placed = True
+                            self.tracker.bcx1_yellow_inside = True
+                            self.tracker.bcx1_distance_px = 60.0
+                        elif cur.id == "S05":
+                            self.tracker.bcx1_collision_hold_duration = 0.8
+                            self.tracker.bcx1_collision = True
+                            self.tracker.bcx1_distance_px = 0.0
+                        elif cur.id == "S06" or self.tracker.step_idx >= len(self.tracker.steps) - 1:
+                            self.tracker.bcx1_s06_hold_duration = 0.7
+                            self.tracker.bcx1_collision = False
+                            self.tracker.bcx1_distance_px = 40.0
+                            self.tracker.protocol_complete = True
+                    else:
+                        if cur.id == "S01":
+                            self.tracker.s01_stable_duration = self.tracker.S01_TARGET_S
+                        elif cur.id == "S02":
+                            self.tracker.target_lifted = True
+                            self.tracker.s02_lift_duration = self.tracker.S02_TARGET_S
+                        elif cur.id == "S03":
+                            self.tracker.water_consumed = True
+                            self.tracker.drink_hold_duration = self.tracker.S03_TARGET_S
+                        elif cur.id == "S04" or self.tracker.step_idx >= len(self.tracker.steps) - 1:
+                            self.tracker.protocol_complete = True
+                            self.tracker.s04_settle_duration = self.tracker.S04_TARGET_S
                     self.tracker._advance_step(now)
             elif event_name == "inject_skip":
-                # Mark step S03 as skipped
-                for s in self.tracker.steps:
-                    if s.id == "S03":
-                        s.status = "skipped"
-                        break
-                self.tracker._trigger_alert(
-                    step_id="S03",
-                    severity="caution",
-                    kind="skipped",
-                    message="Step S03 Skipped! Bottle returned to table without drinking.",
-                    tts="Warning. Step three skipped. Drink water before returning the bottle.",
-                    t=now,
-                )
+                if self.tracker.experiment_id in ["MOA-1", "MULTI-OBJ-1"]:
+                    for s in self.tracker.steps:
+                        if s.id == "S06":
+                            s.status = "skipped"
+                            break
+                    self.tracker.moa1_water_consumed = False
+                    self.tracker._trigger_alert(
+                        step_id="S06",
+                        severity="critical",
+                        kind="skipped",
+                        message="Step S06 skipped! Water bottle returned to table without drinking.",
+                        tts="Warning: Step skipped. Drink water from the bottle before returning it.",
+                        t=now,
+                    )
+                elif self.tracker.experiment_id in ["BCX-1", "BOX-COL-1"]:
+                    for s in self.tracker.steps:
+                        if s.id == "S03":
+                            s.status = "skipped"
+                            break
+                    self.tracker.bcx1_red_inside = False
+                    self.tracker.bcx1_yellow_inside = True
+                    self.tracker._trigger_alert(
+                        step_id="S03",
+                        severity="critical",
+                        kind="skipped",
+                        message="Step S03 skipped! Red box was skipped and yellow box placed instead.",
+                        tts="Warning: Step skipped. Place the red box before proceeding.",
+                        t=now,
+                    )
+                else:
+                    # Mark step S03 as skipped
+                    for s in self.tracker.steps:
+                        if s.id == "S03":
+                            s.status = "skipped"
+                            break
+                    self.tracker._trigger_alert(
+                        step_id="S03",
+                        severity="caution",
+                        kind="skipped",
+                        message="Step S03 Skipped! Bottle returned to table without drinking.",
+                        tts="Warning. Step three skipped. Drink water before returning the bottle.",
+                        t=now,
+                    )
+            elif event_name in ["inject_out_of_order", "moa1_out_of_order"]:
+                if self.tracker.experiment_id in ["MOA-1", "MULTI-OBJ-1"]:
+                    self.tracker.moa1_phone_picked = True
+                    self.tracker.moa1_is_seated = False
+                    self.tracker.moa1_chair_pulled = False
+                    cur_sid = self.tracker.steps[self.tracker.step_idx].id if self.tracker.step_idx < len(self.tracker.steps) else "S01"
+                    self.tracker._trigger_alert(
+                        step_id=cur_sid,
+                        severity="critical",
+                        kind="out_of_order",
+                        message="Out of order step detected! Pull chair and sit before picking up smartphone.",
+                        tts="Warning: Step out of order. Pull chair and sit down before picking up smartphone.",
+                        t=now,
+                    )
+                elif self.tracker.experiment_id in ["BCX-1", "BOX-COL-1"]:
+                    for s in self.tracker.steps:
+                        if s.id == "S03":
+                            s.status = "skipped"
+                            break
+                    self.tracker.bcx1_red_inside = False
+                    self.tracker.bcx1_yellow_inside = True
+                    self.tracker._trigger_alert(
+                        step_id="S03",
+                        severity="critical",
+                        kind="out_of_order",
+                        message="Out of order! Step S03 requires placing Red Box first. Yellow box detected inside.",
+                        tts="Warning: Step out of order. Place the Red Box inside the container first.",
+                        t=now,
+                    )
+                else:
+                    self.tracker._trigger_alert(
+                        step_id="S01",
+                        severity="critical",
+                        kind="out_of_order",
+                        message="Out of order! Step S01 requires resting bottle on table first to calibrate baseline.",
+                        tts="Warning: Step out of order. Place bottle on table to calibrate baseline first.",
+                        t=now,
+                    )
             elif event_name == "inject_wrong_object":
                 self.tracker._trigger_alert(
                     step_id="S02",
@@ -414,6 +507,191 @@ class TrackerService:
                     kind="wrong_object",
                     message="Wrong object grasped! Confusable cup/mug detected instead of target bottle.",
                     tts="Wrong object grasped. That is the cup, not the water bottle.",
+                    t=now,
+                )
+            elif event_name == "bcx1_collision":
+                # Simulate BCX-1 collision event (Step S05)
+                self.tracker.bcx1_container_locked = True
+                self.tracker.bcx1_colors_verified = True
+                self.tracker.bcx1_red_placed = True
+                self.tracker.bcx1_yellow_placed = True
+                self.tracker.bcx1_red_inside = True
+                self.tracker.bcx1_yellow_inside = True
+                self.tracker.bcx1_collision = True
+                self.tracker.bcx1_distance_px = 0.0
+                self.tracker.bcx1_collision_hold_duration = 0.8
+                for s in self.tracker.steps:
+                    if s.id in ["S01", "S02", "S03", "S04", "S05"]:
+                        s.status = "completed"
+                        s.completed_at = now
+                self.tracker._advance_step(now)
+                self.tracker._trigger_alert(
+                    step_id="S05",
+                    severity="info",
+                    kind="collision_confirmed",
+                    message="Box Collision Confirmed! Red and Yellow boxes in active collision inside container.",
+                    tts="Notice: Box collision confirmed. Contact verified inside container.",
+                    t=now,
+                )
+            elif event_name == "bcx1_skip_red":
+                # Simulate BCX-1 skipped red box (placing yellow first in S03)
+                for s in self.tracker.steps:
+                    if s.id == "S03":
+                        s.status = "skipped"
+                        break
+                self.tracker.bcx1_red_inside = False
+                self.tracker.bcx1_yellow_inside = True
+                self.tracker._trigger_alert(
+                    step_id="S03",
+                    severity="critical",
+                    kind="out_of_order",
+                    message="Out of order! Step S03 requires placing Red Box first. Yellow box detected inside.",
+                    tts="Warning: Step out of order. Place the Red Box inside the container first.",
+                    t=now,
+                )
+            elif event_name == "bcx1_hazard_oob":
+                # Simulate collision out of bounds hazard
+                self.tracker.bcx1_collision = True
+                self.tracker.bcx1_distance_px = 0.0
+                self.tracker.bcx1_red_inside = False
+                self.tracker.bcx1_yellow_inside = False
+                self.tracker._trigger_alert(
+                    step_id="S05",
+                    severity="critical",
+                    kind="hazard",
+                    message="Out-of-Bounds Hazard! Collision must take place inside the container.",
+                    tts="Hazard warning: Collision must occur inside the container.",
+                    t=now,
+                )
+            elif event_name == "moa1_pull_chair":
+                self.tracker.moa1_chair_pulled = True
+                self.tracker.moa1_s01_hold_duration = 0.8
+                for s in self.tracker.steps:
+                    if s.id == "S01":
+                        s.status = "completed"
+                        s.completed_at = now
+                self.tracker._advance_step(now)
+                self.tracker._trigger_alert(
+                    step_id="S01",
+                    severity="info",
+                    kind="step_complete",
+                    message="Chair pulled into position. Now sit down on the chair.",
+                    tts="Chair positioned. Please sit down on the chair.",
+                    t=now,
+                )
+            elif event_name == "moa1_sit":
+                self.tracker.moa1_chair_pulled = True
+                self.tracker.moa1_is_seated = True
+                self.tracker.moa1_knee_angle_deg = 92.5
+                self.tracker.moa1_s02_hold_duration = 0.8
+                for s in self.tracker.steps:
+                    if s.id in ["S01", "S02"]:
+                        s.status = "completed"
+                        s.completed_at = now
+                self.tracker._advance_step(now)
+                self.tracker._trigger_alert(
+                    step_id="S02",
+                    severity="info",
+                    kind="step_complete",
+                    message="Seated posture confirmed (knee angle 92.5°). Pick up the smartphone.",
+                    tts="Seated posture confirmed. Pick up the smartphone.",
+                    t=now,
+                )
+            elif event_name == "moa1_phone_pickup":
+                self.tracker.moa1_is_seated = True
+                self.tracker.moa1_phone_picked = True
+                self.tracker.moa1_s03_hold_duration = 0.6
+                for s in self.tracker.steps:
+                    if s.id in ["S01", "S02", "S03"]:
+                        s.status = "completed"
+                        s.completed_at = now
+                self.tracker._advance_step(now)
+                self.tracker._trigger_alert(
+                    step_id="S03",
+                    severity="info",
+                    kind="step_complete",
+                    message="Smartphone picked up. Place it back down onto the desk surface.",
+                    tts="Phone picked up. Return the smartphone to the desk.",
+                    t=now,
+                )
+            elif event_name == "moa1_phone_stow":
+                self.tracker.moa1_phone_picked = True
+                self.tracker.moa1_phone_stowed = True
+                self.tracker.moa1_s04_hold_duration = 0.6
+                for s in self.tracker.steps:
+                    if s.id in ["S01", "S02", "S03", "S04"]:
+                        s.status = "completed"
+                        s.completed_at = now
+                self.tracker._advance_step(now)
+                self.tracker._trigger_alert(
+                    step_id="S04",
+                    severity="info",
+                    kind="step_complete",
+                    message="Smartphone stowed on desk. Next, grasp and lift the water bottle.",
+                    tts="Smartphone stowed. Grasp and lift the water bottle.",
+                    t=now,
+                )
+            elif event_name == "moa1_bottle_lift":
+                self.tracker.moa1_bottle_lifted = True
+                self.tracker.moa1_s05_hold_duration = 0.6
+                for s in self.tracker.steps:
+                    if s.id in ["S01", "S02", "S03", "S04", "S05"]:
+                        s.status = "completed"
+                        s.completed_at = now
+                self.tracker._advance_step(now)
+                self.tracker._trigger_alert(
+                    step_id="S05",
+                    severity="info",
+                    kind="step_complete",
+                    message="Water bottle lifted. Bring to mouth and drink water (hold >= 1.5s).",
+                    tts="Bottle lifted. Bring to mouth and drink water.",
+                    t=now,
+                )
+            elif event_name == "moa1_drink":
+                self.tracker.moa1_bottle_lifted = True
+                self.tracker.moa1_drinking_hold_duration = 1.5
+                self.tracker.moa1_water_consumed = True
+                for s in self.tracker.steps:
+                    if s.id in ["S01", "S02", "S03", "S04", "S05", "S06"]:
+                        s.status = "completed"
+                        s.completed_at = now
+                self.tracker._advance_step(now)
+                self.tracker._trigger_alert(
+                    step_id="S06",
+                    severity="info",
+                    kind="step_complete",
+                    message="Drinking verified (held >= 1.5s). Return bottle to table and release hands.",
+                    tts="Water consumed. Return bottle to table and release hands.",
+                    t=now,
+                )
+            elif event_name == "moa1_bottle_return":
+                self.tracker.moa1_bottle_returned = True
+                self.tracker.protocol_complete = True
+                self.tracker.moa1_s07_hold_duration = 0.6
+                for s in self.tracker.steps:
+                    s.status = "completed"
+                    s.completed_at = now
+                self.tracker._advance_step(now)
+                self.tracker._trigger_alert(
+                    step_id="S07",
+                    severity="info",
+                    kind="nominal_completion",
+                    message="Multi-Object Experiment Complete! All seven activities verified nominal.",
+                    tts="Multi-object experiment complete. All seven steps verified nominal.",
+                    t=now,
+                )
+            elif event_name == "moa1_skip_drink":
+                for s in self.tracker.steps:
+                    if s.id == "S06":
+                        s.status = "skipped"
+                        break
+                self.tracker.moa1_water_consumed = False
+                self.tracker._trigger_alert(
+                    step_id="S06",
+                    severity="critical",
+                    kind="skipped",
+                    message="Step S06 skipped! Water bottle returned to table without drinking.",
+                    tts="Warning: Step skipped. Drink water from the bottle before returning it.",
                     t=now,
                 )
             elif event_name == "reset":
@@ -432,5 +710,5 @@ _service: TrackerService | None = None
 def get_tracker_service() -> TrackerService:
     global _service
     if _service is None:
-        _service = TrackerService("WBP-1")
+        _service = TrackerService("MOA-1")
     return _service
